@@ -46,6 +46,8 @@ const isWindows = process.platform === 'win32'
 const testWorkspace = path.join(__dirname, '_temp', 'git-auth-helper')
 const originalRunnerTemp = process.env['RUNNER_TEMP']
 const originalHome = process.env['HOME']
+const originalGlobalConfig = process.env['GIT_CONFIG_GLOBAL']
+const originalXdgConfig = process.env['XDG_CONFIG_HOME']
 let workspace: string
 let localGitConfigPath: string
 let globalGitConfigPath: string
@@ -67,11 +69,21 @@ describe('git-auth-helper tests', () => {
 
   beforeEach(() => {
     jest.clearAllMocks()
+    delete process.env['GIT_CONFIG_GLOBAL']
+    delete process.env['XDG_CONFIG_HOME']
   })
 
   afterEach(() => {
     // Unregister mocks
     jest.clearAllMocks()
+
+    for (const [key, value] of [
+      ['GIT_CONFIG_GLOBAL', originalGlobalConfig],
+      ['XDG_CONFIG_HOME', originalXdgConfig]
+    ]) {
+      if (value === undefined) delete process.env[key!]
+      else process.env[key!] = value
+    }
 
     // Restore HOME
     if (originalHome) {
