@@ -15,6 +15,16 @@ import {GitVersion} from './git-version.js'
 export const MinimumGitVersion = new GitVersion('2.18')
 export const MinimumGitSparseCheckoutVersion = new GitVersion('2.28')
 
+/** Missing git-dedup must not silently become an uncached REST checkout. */
+export class GitDedupNotFoundError extends Error {
+  constructor() {
+    super(
+      'git-dedup was not found on PATH. Install git-dedup on the runner before using checkout-git-dedup.'
+    )
+    this.name = 'GitDedupNotFoundError'
+  }
+}
+
 export interface IGitCommandManager {
   branchDelete(remote: boolean, branch: string): Promise<void>
   branchExists(remote: boolean, pattern: string): Promise<boolean>
@@ -673,7 +683,11 @@ class GitCommandManager {
       this.gitEnv['GIT_LFS_SKIP_SMUDGE'] = '1'
     }
 
-    this.gitPath = await io.which('git', true)
+    try {
+      this.gitPath = await io.which('git-dedup', true)
+    } catch {
+      throw new GitDedupNotFoundError()
+    }
 
     // Git version
     core.debug('Getting git version')
@@ -734,7 +748,7 @@ class GitCommandManager {
       }
     }
     // Set the user agent
-    let gitHttpUserAgent = `git/${this.gitVersion} (github-actions-checkout)`
+    let gitHttpUserAgent = `git/${this.gitVersion} (github-actions-checkout-git-dedup)`
 
     // Append orchestration ID if set
     const orchId = process.env['ACTIONS_ORCHESTRATION_ID']

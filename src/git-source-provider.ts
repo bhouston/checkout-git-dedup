@@ -381,8 +381,12 @@ async function getGitCommandManager(
       settings.sparseCheckout != null
     )
   } catch (err) {
-    // Git is required for LFS
-    if (settings.lfs) {
+    // A missing git-dedup installation must not silently bypass the store.
+    // Native Git is still required for LFS.
+    if (
+      settings.lfs ||
+      err instanceof gitCommandManager.GitDedupNotFoundError
+    ) {
       throw err
     }
 

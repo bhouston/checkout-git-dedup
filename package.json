@@ -1,7 +1,7 @@
 {
-  "name": "checkout",
+  "name": "checkout-git-dedup",
   "version": "7.0.1",
-  "description": "checkout action",
+  "description": "Checkout using git-dedup and the runner shared object store",
   "type": "module",
   "main": "lib/main.js",
   "scripts": {
@@ -11,11 +11,12 @@
     "lint": "eslint src/**/*.ts",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "licensed-check": "src/misc/licensed-check.sh",
-    "licensed-generate": "src/misc/licensed-generate.sh"
+    "licensed-generate": "src/misc/licensed-generate.sh",
+    "test:e2e": "node __test__/checkout-e2e.mjs"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/actions/checkout.git"
+    "url": "git+https://github.com/bhouston/checkout-git-dedup.git"
   },
   "keywords": [
     "github",
@@ -25,9 +26,9 @@
   "author": "GitHub",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/actions/checkout/issues"
+    "url": "https://github.com/bhouston/checkout-git-dedup/issues"
   },
-  "homepage": "https://github.com/actions/checkout#readme",
+  "homepage": "https://github.com/bhouston/checkout-git-dedup#readme",
   "engines": {
     "node": ">=24"
   },

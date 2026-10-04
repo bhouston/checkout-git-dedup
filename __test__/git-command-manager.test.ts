@@ -23,6 +23,10 @@ jest.unstable_mockModule('../src/fs-helper.js', () => ({
   directoryExistsSync: mockDirectoryExistsSync
 }))
 
+// Resolve git-dedup without depending on what is installed on the test machine.
+const mockWhich = jest.fn(async (command: string) => `/runner/bin/${command}`)
+jest.unstable_mockModule('@actions/io', () => ({which: mockWhich}))
+
 // Dynamic imports after mocking
 const commandManager = await import('../src/git-command-manager.js')
 type IGitCommandManager =
@@ -499,7 +503,7 @@ describe('git user-agent with orchestration ID', () => {
     expect(git).toBeDefined()
     expect(capturedEnv).toBeDefined()
     expect(capturedEnv['GIT_HTTP_USER_AGENT']).toBe(
-      `git/2.18 (github-actions-checkout) actions_orchestration_id/${orchId}`
+      `git/2.18 (github-actions-checkout-git-dedup) actions_orchestration_id/${orchId}`
     )
   })
 
@@ -534,7 +538,7 @@ describe('git user-agent with orchestration ID', () => {
     expect(git).toBeDefined()
     expect(capturedEnv).toBeDefined()
     expect(capturedEnv['GIT_HTTP_USER_AGENT']).toBe(
-      'git/2.18 (github-actions-checkout) actions_orchestration_id/test__with__special_chars'
+      'git/2.18 (github-actions-checkout-git-dedup) actions_orchestration_id/test__with__special_chars'
     )
   })
 
@@ -568,7 +572,49 @@ describe('git user-agent with orchestration ID', () => {
     expect(git).toBeDefined()
     expect(capturedEnv).toBeDefined()
     expect(capturedEnv['GIT_HTTP_USER_AGENT']).toBe(
-      'git/2.18 (github-actions-checkout)'
+      'git/2.18 (github-actions-checkout-git-dedup)'
     )
+  })
+})
+
+describe('git-dedup executable', () => {
+  beforeEach(() => {
+    mockWhich.mockImplementation(async command => `/runner/bin/${command}`)
+    mockExec.mockImplementation((_binary: any, args: any, options: any) => {
+      if (args.includes('version'))
+        options.listeners.stdout(Buffer.from('git version 2.50.1'))
+      return 0
+    })
+  })
+
+  it('uses the installed wrapper directly for fetches and preserves runner settings', async () => {
+    const previousStore = process.env['GIT_DEDUP_STORE']
+    process.env['GIT_DEDUP_STORE'] = '/runner/shared-store'
+    try {
+      const manager = await commandManager.createCommandManager(
+        'test',
+        false,
+        false
+      )
+      await manager.fetch(['+refs/heads/main:refs/remotes/origin/main'], {
+        fetchDepth: 1
+      })
+      expect(mockWhich).toHaveBeenCalledWith('git-dedup', true)
+      const [binary, args, options] = mockExec.mock.calls.at(-1) as any[]
+      expect(binary).toBe('"/runner/bin/git-dedup"')
+      expect(args).toContain('--depth=1')
+      expect(options.env.GIT_DEDUP_STORE).toBe('/runner/shared-store')
+      expect(options.env.HOME).toBe(process.env['HOME'])
+    } finally {
+      if (previousStore === undefined) delete process.env['GIT_DEDUP_STORE']
+      else process.env['GIT_DEDUP_STORE'] = previousStore
+    }
+  })
+
+  it('reports a missing wrapper instead of an uncached checkout', async () => {
+    mockWhich.mockRejectedValueOnce(new Error('not found'))
+    await expect(
+      commandManager.createCommandManager('test', false, false)
+    ).rejects.toThrow(commandManager.GitDedupNotFoundError)
   })
 })

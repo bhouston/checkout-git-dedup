@@ -1,66 +1,27 @@
-[![Build and Test](https://github.com/actions/checkout/actions/workflows/test.yml/badge.svg)](https://github.com/actions/checkout/actions/workflows/test.yml)
+# checkout-git-dedup
 
-# Checkout v7
+[![Build and Test](https://github.com/bhouston/checkout-git-dedup/actions/workflows/test.yml/badge.svg)](https://github.com/bhouston/checkout-git-dedup/actions/workflows/test.yml)
 
-## What's new
+A fork of [actions/checkout](https://github.com/actions/checkout) that calls **git-dedup directly** for checkout operations. Replace the action in your workflow:
 
-- Safer fork pull request handling: checkout now refuses to check out fork pull request code by default when the workflow is triggered by `pull_request_target` or `workflow_run`. These triggers run with the base repository's `GITHUB_TOKEN`, secrets, and runner access, where executing a fork's code commonly leads to "pwn request" vulnerabilities.
-  - To opt in after [reviewing the risks](https://gh.io/securely-using-pull_request_target), set the new `allow-unsafe-pr-checkout: true` input.
-- Migrated `actions/checkout` to ESM to support new versions of the `@actions/*` packages.
-- Updated direct and transitive dependencies, including security fixes for known vulnerabilities.
+```yaml
+steps:
+  - uses: bhouston/checkout-git-dedup@main
+```
 
-# Checkout v6
+Install git-dedup on the runner once, alongside native Git. No `git` shim or action-specific configuration is required. The action uses the runner's existing git-dedup settings, including `GIT_DEDUP_STORE` and `git-dedup.gitPath`; the default shared store stays in `~/.git-dedup`. Keep that store between jobs on a self-hosted runner to reuse objects across CI runs. The wrapper and its Node.js runtime must be on the runner's `PATH`, including the post-job cleanup step.
 
-## What's new
+Use a git-dedup build with pool-backed fetch support ([git-dedup#144](https://github.com/bhouston/git-dedup/pull/144), currently available on `main`). The npm 2.1.0 release predates that feature. Native Git is still required, and the action itself uses the Node.js 24 Actions runtime.
 
-- Improved credential security: `persist-credentials` now stores credentials in a separate file under `$RUNNER_TEMP` instead of directly in `.git/config`
-- No workflow changes required — `git fetch`, `git push`, etc. continue to work automatically
-- Running authenticated git commands from a [Docker container action](https://docs.github.com/actions/sharing-automations/creating-actions/creating-a-docker-container-action) requires Actions Runner [v2.329.0](https://github.com/actions/runner/releases/tag/v2.329.0) or later
+All upstream checkout inputs and outputs remain available. git-dedup upgrades bandwidth-oriented depth and supported partial-clone filter requests to full history through its store; sparse checkout still limits working-tree files. This does not automatically create local branches or tags beyond the requested refspecs. A missing git-dedup installation fails with an installation message rather than silently bypassing caching.
 
-# Checkout v5
-
-## What's new
-
-- Updated to the node24 runtime
-  - This requires a minimum Actions Runner version of [v2.327.1](https://github.com/actions/runner/releases/tag/v2.327.1) to run.
-
-# Checkout v4
-
-This action checks-out your repository under `$GITHUB_WORKSPACE`, so your workflow can access it.
-
-Only a single commit is fetched by default, for the ref/SHA that triggered the workflow. Set `fetch-depth: 0` to fetch all history for all branches and tags. Refer [here](https://docs.github.com/actions/using-workflows/events-that-trigger-workflows) to learn which commit `$GITHUB_SHA` points to for different events.
-
-The auth token is persisted in the local git config. This enables your scripts to run authenticated git commands. The token is removed during post-job cleanup. Set `persist-credentials: false` to opt-out.
-
-When Git 2.18 or higher is not in your PATH, falls back to the REST API to download the files.
-
-### Note
-
-Thank you for your interest in this GitHub action, however, right now we are not taking contributions. 
-
-We continue to focus our resources on strategic areas that help our customers be successful while making developers' lives easier. While GitHub Actions remains a key part of this vision, we are allocating resources towards other areas of Actions and are not taking contributions to this repository at this time. The GitHub public roadmap is the best place to follow along for any updates on features we’re working on and what stage they’re in.
-
-We are taking the following steps to better direct requests related to GitHub Actions, including:
-
-1. We will be directing questions and support requests to our [Community Discussions area](https://github.com/orgs/community/discussions/categories/actions)
-
-2. High Priority bugs can be reported through Community Discussions or you can report these to our support team https://support.github.com/contact/bug-report.
-
-3. Security Issues should be handled as per our [security.md](security.md)
-
-We will still provide security updates for this project and fix major breaking changes during this time.
-
-You are welcome to still raise bugs in this repo.
-
-# What's new
-
-Please refer to the [release page](https://github.com/actions/checkout/releases/latest) for the latest release notes.
+Checkout authentication and post-job cleanup follow upstream. Temporary global Git configuration includes the runner's settings (including XDG and nested includes) while preserving `HOME`, so checkout does not redirect the default store into a temporary directory. The runner's permanent global configuration is left intact.
 
 # Usage
 
 <!-- start usage -->
 ```yaml
-- uses: actions/checkout@v7
+- uses: bhouston/checkout-git-dedup@main
   with:
     # Repository name with owner. For example, actions/checkout
     # Default: ${{ github.repository }}
@@ -133,7 +94,8 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
     # Default: true
     sparse-checkout-cone-mode: ''
 
-    # Number of commits to fetch. 0 indicates all history for all branches and tags.
+    # Number of commits requested. git-dedup upgrades supported shallow fetches to
+    # full history from its shared store. 0 fetches all branches and tags.
     # Default: 1
     fetch-depth: ''
 
@@ -208,7 +170,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Fetch only the root files
 
 ```yaml
-- uses: actions/checkout@v7
+- uses: bhouston/checkout-git-dedup@main
   with:
     sparse-checkout: .
 ```
@@ -216,7 +178,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Fetch only the root files and `.github` and `src` folder
 
 ```yaml
-- uses: actions/checkout@v7
+- uses: bhouston/checkout-git-dedup@main
   with:
     sparse-checkout: |
       .github
@@ -226,7 +188,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Fetch only a single file
 
 ```yaml
-- uses: actions/checkout@v7
+- uses: bhouston/checkout-git-dedup@main
   with:
     sparse-checkout: |
       README.md
@@ -236,7 +198,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Fetch all history for all tags and branches
 
 ```yaml
-- uses: actions/checkout@v7
+- uses: bhouston/checkout-git-dedup@main
   with:
     fetch-depth: 0
 ```
@@ -244,7 +206,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Checkout a different branch
 
 ```yaml
-- uses: actions/checkout@v7
+- uses: bhouston/checkout-git-dedup@main
   with:
     ref: my-branch
 ```
@@ -252,7 +214,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Checkout HEAD^
 
 ```yaml
-- uses: actions/checkout@v7
+- uses: bhouston/checkout-git-dedup@main
   with:
     fetch-depth: 2
 - run: git checkout HEAD^
@@ -262,12 +224,12 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 
 ```yaml
 - name: Checkout
-  uses: actions/checkout@v7
+  uses: bhouston/checkout-git-dedup@main
   with:
     path: main
 
 - name: Checkout tools repo
-  uses: actions/checkout@v7
+  uses: bhouston/checkout-git-dedup@main
   with:
     repository: my-org/my-tools
     path: my-tools
@@ -278,10 +240,10 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 
 ```yaml
 - name: Checkout
-  uses: actions/checkout@v7
+  uses: bhouston/checkout-git-dedup@main
 
 - name: Checkout tools repo
-  uses: actions/checkout@v7
+  uses: bhouston/checkout-git-dedup@main
   with:
     repository: my-org/my-tools
     path: my-tools
@@ -292,12 +254,12 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 
 ```yaml
 - name: Checkout
-  uses: actions/checkout@v7
+  uses: bhouston/checkout-git-dedup@main
   with:
     path: main
 
 - name: Checkout private tools
-  uses: actions/checkout@v7
+  uses: bhouston/checkout-git-dedup@main
   with:
     repository: my-org/my-private-tools
     token: ${{ secrets.GH_PAT }} # `GH_PAT` is a secret that contains your PAT
@@ -310,7 +272,7 @@ Please refer to the [release page](https://github.com/actions/checkout/releases/
 ## Checkout pull request HEAD commit instead of merge commit
 
 ```yaml
-- uses: actions/checkout@v7
+- uses: bhouston/checkout-git-dedup@main
   with:
     ref: ${{ github.event.pull_request.head.sha }}
 ```
@@ -326,7 +288,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: bhouston/checkout-git-dedup@main
 ```
 
 ## Push a commit using the built-in token
@@ -337,7 +299,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: bhouston/checkout-git-dedup@main
       - run: |
           date > generated.txt
           # Note: the following account information will not work on GHES
@@ -359,7 +321,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: bhouston/checkout-git-dedup@main
         with:
           ref: ${{ github.head_ref }}
       - run: |
