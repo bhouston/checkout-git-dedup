@@ -123,7 +123,7 @@ function updateUsage(
 }
 
 updateUsage(
-  'actions/checkout@v7',
+  'bhouston/checkout-git-dedup@main',
   path.join(__dirname, '..', '..', 'action.yml'),
   path.join(__dirname, '..', '..', 'README.md')
 )

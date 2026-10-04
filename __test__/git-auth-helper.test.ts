@@ -422,20 +422,20 @@ describe('git-auth-helper tests', () => {
     await authHelper.configureGlobalAuth()
 
     // Assert temporary global config
-    expect(git.env['HOME']).toBeTruthy()
+    expect(git.env['GIT_CONFIG_GLOBAL']).toBeTruthy()
     const configContent = (
-      await fs.promises.readFile(path.join(git.env['HOME'], '.gitconfig'))
+      await fs.promises.readFile(git.env['GIT_CONFIG_GLOBAL'])
     ).toString()
     expect(
       configContent.indexOf(`url.https://github.com/.insteadOf git@github.com`)
     ).toBeGreaterThanOrEqual(0)
   })
 
-  const configureGlobalAuth_copiesGlobalGitConfig =
-    'configureGlobalAuth copies global git config'
-  it(configureGlobalAuth_copiesGlobalGitConfig, async () => {
+  const configureGlobalAuth_includesGlobalGitConfig =
+    'configureGlobalAuth includes global git config'
+  it(configureGlobalAuth_includesGlobalGitConfig, async () => {
     // Arrange
-    await setup(configureGlobalAuth_copiesGlobalGitConfig)
+    await setup(configureGlobalAuth_includesGlobalGitConfig)
     await fs.promises.writeFile(globalGitConfigPath, 'value-from-global-config')
     const authHelper = gitAuthHelper.createAuthHelper(git, settings)
 
@@ -450,19 +450,21 @@ describe('git-auth-helper tests', () => {
     expect(configContent).toBe('value-from-global-config')
 
     // Assert temporary global config
-    expect(git.env['HOME']).toBeTruthy()
+    expect(git.env['GIT_CONFIG_GLOBAL']).toBeTruthy()
     const basicCredential = Buffer.from(
       `x-access-token:${settings.authToken}`,
       'utf8'
     ).toString('base64')
     configContent = (
-      await fs.promises.readFile(path.join(git.env['HOME'], '.gitconfig'))
+      await fs.promises.readFile(git.env['GIT_CONFIG_GLOBAL'])
     ).toString()
     expect(
-      configContent.indexOf('value-from-global-config')
+      configContent.indexOf(JSON.stringify(globalGitConfigPath))
     ).toBeGreaterThanOrEqual(0)
     // Global config should have include.path pointing to credentials file
     expect(configContent.indexOf('include.path')).toBeGreaterThanOrEqual(0)
+    expect(git.env['HOME']).toBeUndefined()
+    expect(process.env['HOME']).toBe(tempHomedir)
 
     // Check credentials in the separate config file
     const credentialsFiles = (await fs.promises.readdir(runnerTemp)).filter(
@@ -509,16 +511,18 @@ describe('git-auth-helper tests', () => {
       }
 
       // Assert temporary global config
-      expect(git.env['HOME']).toBeTruthy()
+      expect(git.env['GIT_CONFIG_GLOBAL']).toBeTruthy()
       const basicCredential = Buffer.from(
         `x-access-token:${settings.authToken}`,
         'utf8'
       ).toString('base64')
       const configContent = (
-        await fs.promises.readFile(path.join(git.env['HOME'], '.gitconfig'))
+        await fs.promises.readFile(git.env['GIT_CONFIG_GLOBAL'])
       ).toString()
       // Global config should have include.path pointing to credentials file
       expect(configContent.indexOf('include.path')).toBeGreaterThanOrEqual(0)
+      expect(git.env['HOME']).toBeUndefined()
+      expect(process.env['HOME']).toBe(tempHomedir)
 
       // Check credentials in the separate config file
       const credentialsFiles = (await fs.promises.readdir(runnerTemp)).filter(
@@ -923,6 +927,53 @@ describe('git-auth-helper tests', () => {
     }
   })
 
+  it('inherits XDG global config without changing HOME or permanent settings', async () => {
+    await setup('xdg config')
+    const xdg = path.join(tempHomedir, '.config', 'git', 'config')
+    await fs.promises.mkdir(path.dirname(xdg), {recursive: true})
+    await fs.promises.writeFile(
+      xdg,
+      '[git-dedup]\n gitPath = /runner/native/git\n'
+    )
+    const authHelper = gitAuthHelper.createAuthHelper(git, settings)
+    const temporary = await authHelper.configureTempGlobalConfig()
+    const contents = await fs.promises.readFile(temporary, 'utf8')
+    expect(contents).toContain(JSON.stringify(xdg))
+    expect(git.env['HOME']).toBeUndefined()
+    expect(process.env['HOME']).toBe(tempHomedir)
+    expect(await fs.promises.readFile(xdg, 'utf8')).toBe(
+      '[git-dedup]\n gitPath = /runner/native/git\n'
+    )
+  })
+
+  it('inherits an explicit global config and restores its environment after cleanup', async () => {
+    await setup('explicit global config')
+    const original = process.env['GIT_CONFIG_GLOBAL']
+    const custom = path.join(tempHomedir, 'custom.gitconfig')
+    await fs.promises.writeFile(
+      custom,
+      '[git-dedup]\n gitPath = /runner/native/git\n'
+    )
+    process.env['GIT_CONFIG_GLOBAL'] = custom
+    try {
+      const authHelper = gitAuthHelper.createAuthHelper(git, settings)
+      const temporary = await authHelper.configureTempGlobalConfig()
+      expect(await fs.promises.readFile(temporary, 'utf8')).toContain(
+        JSON.stringify(custom)
+      )
+      expect(git.env['HOME']).toBeUndefined()
+      await authHelper.removeGlobalConfig()
+      expect(git.env['GIT_CONFIG_GLOBAL']).toBeUndefined()
+      expect(process.env['GIT_CONFIG_GLOBAL']).toBe(custom)
+      expect(await fs.promises.readFile(custom, 'utf8')).toBe(
+        '[git-dedup]\n gitPath = /runner/native/git\n'
+      )
+    } finally {
+      if (original === undefined) delete process.env['GIT_CONFIG_GLOBAL']
+      else process.env['GIT_CONFIG_GLOBAL'] = original
+    }
+  })
+
   const removeGlobalConfig_removesOverride =
     'removeGlobalConfig removes override'
   it(removeGlobalConfig_removesOverride, async () => {
@@ -931,18 +982,18 @@ describe('git-auth-helper tests', () => {
     const authHelper = gitAuthHelper.createAuthHelper(git, settings)
     await authHelper.configureAuth()
     await authHelper.configureGlobalAuth()
-    const homeOverride = git.env['HOME'] // Sanity check
-    expect(homeOverride).toBeTruthy()
-    await fs.promises.stat(path.join(git.env['HOME'], '.gitconfig'))
+    const configOverride = git.env['GIT_CONFIG_GLOBAL'] // Sanity check
+    expect(configOverride).toBeTruthy()
+    await fs.promises.stat(git.env['GIT_CONFIG_GLOBAL'])
 
     // Act
     await authHelper.removeGlobalConfig()
 
     // Assert
-    expect(git.env['HOME']).toBeUndefined()
+    expect(git.env['GIT_CONFIG_GLOBAL']).toBeUndefined()
     try {
-      await fs.promises.stat(homeOverride)
-      throw new Error(`Should have been deleted '${homeOverride}'`)
+      await fs.promises.stat(path.dirname(configOverride))
+      throw new Error(`Should have been deleted '${configOverride}'`)
     } catch (err) {
       if ((err as any)?.code !== 'ENOENT') {
         throw err
@@ -1038,7 +1089,7 @@ async function setup(testName: string): Promise<void> {
         const configPath =
           configFile ||
           (globalConfig
-            ? path.join(git.env['HOME'] || tempHomedir, '.gitconfig')
+            ? git.env['GIT_CONFIG_GLOBAL'] || globalGitConfigPath
             : localGitConfigPath)
         // Ensure directory exists
         await fs.promises.mkdir(path.dirname(configPath), {recursive: true})
@@ -1048,7 +1099,7 @@ async function setup(testName: string): Promise<void> {
     configExists: jest.fn(
       async (key: string, globalConfig?: boolean): Promise<boolean> => {
         const configPath = globalConfig
-          ? path.join(git.env['HOME'] || tempHomedir, '.gitconfig')
+          ? git.env['GIT_CONFIG_GLOBAL'] || globalGitConfigPath
           : localGitConfigPath
         const content = await fs.promises.readFile(configPath)
         const lines = content
@@ -1088,7 +1139,7 @@ async function setup(testName: string): Promise<void> {
     tryConfigUnset: jest.fn(
       async (key: string, globalConfig?: boolean): Promise<boolean> => {
         const configPath = globalConfig
-          ? path.join(git.env['HOME'] || tempHomedir, '.gitconfig')
+          ? git.env['GIT_CONFIG_GLOBAL'] || globalGitConfigPath
           : localGitConfigPath
         let content = await fs.promises.readFile(configPath)
         let lines = content
@@ -1110,7 +1161,7 @@ async function setup(testName: string): Promise<void> {
         const targetConfigPath =
           configPath ||
           (globalConfig
-            ? path.join(git.env['HOME'] || tempHomedir, '.gitconfig')
+            ? git.env['GIT_CONFIG_GLOBAL'] || globalGitConfigPath
             : localGitConfigPath)
         let content = await fs.promises.readFile(targetConfigPath)
         let lines = content
@@ -1133,7 +1184,7 @@ async function setup(testName: string): Promise<void> {
         const targetConfigPath =
           configPath ||
           (globalConfig
-            ? path.join(git.env['HOME'] || tempHomedir, '.gitconfig')
+            ? git.env['GIT_CONFIG_GLOBAL'] || globalGitConfigPath
             : localGitConfigPath)
         const content = await fs.promises.readFile(targetConfigPath)
         const lines = content
@@ -1153,7 +1204,7 @@ async function setup(testName: string): Promise<void> {
         const targetConfigPath =
           configPath ||
           (globalConfig
-            ? path.join(git.env['HOME'] || tempHomedir, '.gitconfig')
+            ? git.env['GIT_CONFIG_GLOBAL'] || globalGitConfigPath
             : localGitConfigPath)
         const content = await fs.promises.readFile(targetConfigPath)
         const lines = content

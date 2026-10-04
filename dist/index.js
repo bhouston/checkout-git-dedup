@@ -35086,29 +35086,34 @@ class GitAuthHelper {
         const uniqueId = (0,external_crypto_namespaceObject.randomUUID)();
         this.temporaryHomePath = external_path_namespaceObject.join(runnerTemp, uniqueId);
         await external_fs_namespaceObject.promises.mkdir(this.temporaryHomePath, { recursive: true });
-        // Copy the global git config
-        const gitConfigPath = external_path_namespaceObject.join(process.env['HOME'] || external_os_namespaceObject.homedir(), '.gitconfig');
+        // Include the runner's real global files in Git's normal precedence order.
+        // Absolute includes preserve relative/nested includes and XDG settings, while
+        // all action-specific writes go only to this temporary config.
+        const home = process.env['HOME'] || external_os_namespaceObject.homedir();
+        const globalFiles = process.env['GIT_CONFIG_GLOBAL']
+            ? [process.env['GIT_CONFIG_GLOBAL']]
+            : [
+                external_path_namespaceObject.join(process.env['XDG_CONFIG_HOME'] || external_path_namespaceObject.join(home, '.config'), 'git', 'config'),
+                external_path_namespaceObject.join(home, '.gitconfig')
+            ];
         const newGitConfigPath = external_path_namespaceObject.join(this.temporaryHomePath, '.gitconfig');
-        let configExists = false;
-        try {
-            await external_fs_namespaceObject.promises.stat(gitConfigPath);
-            configExists = true;
-        }
-        catch (err) {
-            if (err?.code !== 'ENOENT') {
-                throw err;
+        const includes = [];
+        for (const file of globalFiles) {
+            const absolute = external_path_namespaceObject.resolve(this.git.getWorkingDirectory(), file);
+            try {
+                await external_fs_namespaceObject.promises.stat(absolute);
+                includes.push(`  path = ${JSON.stringify(absolute)}`);
+            }
+            catch (err) {
+                if (err?.code !== 'ENOENT')
+                    throw err;
             }
         }
-        if (configExists) {
-            info(`Copying '${gitConfigPath}' to '${newGitConfigPath}'`);
-            await io_cp(gitConfigPath, newGitConfigPath);
-        }
-        else {
-            await external_fs_namespaceObject.promises.writeFile(newGitConfigPath, '');
-        }
-        // Override HOME
-        info(`Temporarily overriding HOME='${this.temporaryHomePath}' before making global git config changes`);
-        this.git.setEnvironmentVariable('HOME', this.temporaryHomePath);
+        await external_fs_namespaceObject.promises.writeFile(newGitConfigPath, includes.length ? `[include]\n${includes.join('\n')}\n` : '');
+        // Isolate checkout's config writes without moving git-dedup's persistent store.
+        // Keep HOME and all git-dedup settings inherited from the runner.
+        info(`Temporarily using '${newGitConfigPath}' for global git config changes`);
+        this.git.setEnvironmentVariable('GIT_CONFIG_GLOBAL', newGitConfigPath);
         return newGitConfigPath;
     }
     async configureGlobalAuth() {
@@ -35183,8 +35188,8 @@ class GitAuthHelper {
     }
     async removeGlobalConfig() {
         if (this.temporaryHomePath?.length > 0) {
-            core_debug(`Unsetting HOME override`);
-            this.git.removeEnvironmentVariable('HOME');
+            core_debug(`Unsetting temporary global config override`);
+            this.git.removeEnvironmentVariable('GIT_CONFIG_GLOBAL');
             await rmRF(this.temporaryHomePath);
         }
     }
@@ -35597,6 +35602,13 @@ class GitVersion {
 // sparse-checkout not [well-]supported before 2.28 (see https://github.com/actions/checkout/issues/1386)
 const MinimumGitVersion = new GitVersion('2.18');
 const MinimumGitSparseCheckoutVersion = new GitVersion('2.28');
+/** Missing git-dedup must not silently become an uncached REST checkout. */
+class GitDedupNotFoundError extends Error {
+    constructor() {
+        super('git-dedup was not found on PATH. Install git-dedup on the runner before using checkout-git-dedup.');
+        this.name = 'GitDedupNotFoundError';
+    }
+}
 async function createCommandManager(workingDirectory, lfs, doSparseCheckout) {
     return await GitCommandManager.createCommandManager(workingDirectory, lfs, doSparseCheckout);
 }
@@ -36018,7 +36030,12 @@ class GitCommandManager {
         if (!this.lfs) {
             this.gitEnv['GIT_LFS_SKIP_SMUDGE'] = '1';
         }
-        this.gitPath = await which('git', true);
+        try {
+            this.gitPath = await which('git-dedup', true);
+        }
+        catch {
+            throw new GitDedupNotFoundError();
+        }
         // Git version
         core_debug('Getting git version');
         this.gitVersion = new GitVersion();
@@ -36068,7 +36085,7 @@ class GitCommandManager {
             }
         }
         // Set the user agent
-        let gitHttpUserAgent = `git/${this.gitVersion} (github-actions-checkout)`;
+        let gitHttpUserAgent = `git/${this.gitVersion} (github-actions-checkout-git-dedup)`;
         // Append orchestration ID if set
         const orchId = process.env['ACTIONS_ORCHESTRATION_ID'];
         if (orchId) {
@@ -41957,8 +41974,10 @@ async function getGitCommandManager(settings) {
         return await createCommandManager(settings.repositoryPath, settings.lfs, settings.sparseCheckout != null);
     }
     catch (err) {
-        // Git is required for LFS
-        if (settings.lfs) {
+        // A missing git-dedup installation must not silently bypass the store.
+        // Native Git is still required for LFS.
+        if (settings.lfs ||
+            err instanceof GitDedupNotFoundError) {
             throw err;
         }
         // Otherwise fallback to REST API

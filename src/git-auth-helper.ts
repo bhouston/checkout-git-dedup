@@ -94,33 +94,42 @@ class GitAuthHelper {
     this.temporaryHomePath = path.join(runnerTemp, uniqueId)
     await fs.promises.mkdir(this.temporaryHomePath, {recursive: true})
 
-    // Copy the global git config
-    const gitConfigPath = path.join(
-      process.env['HOME'] || os.homedir(),
-      '.gitconfig'
-    )
+    // Include the runner's real global files in Git's normal precedence order.
+    // Absolute includes preserve relative/nested includes and XDG settings, while
+    // all action-specific writes go only to this temporary config.
+    const home = process.env['HOME'] || os.homedir()
+    const globalFiles = process.env['GIT_CONFIG_GLOBAL']
+      ? [process.env['GIT_CONFIG_GLOBAL']]
+      : [
+          path.join(
+            process.env['XDG_CONFIG_HOME'] || path.join(home, '.config'),
+            'git',
+            'config'
+          ),
+          path.join(home, '.gitconfig')
+        ]
     const newGitConfigPath = path.join(this.temporaryHomePath, '.gitconfig')
-    let configExists = false
-    try {
-      await fs.promises.stat(gitConfigPath)
-      configExists = true
-    } catch (err) {
-      if ((err as any)?.code !== 'ENOENT') {
-        throw err
+    const includes: string[] = []
+    for (const file of globalFiles) {
+      const absolute = path.resolve(this.git.getWorkingDirectory(), file)
+      try {
+        await fs.promises.stat(absolute)
+        includes.push(`  path = ${JSON.stringify(absolute)}`)
+      } catch (err) {
+        if ((err as any)?.code !== 'ENOENT') throw err
       }
     }
-    if (configExists) {
-      core.info(`Copying '${gitConfigPath}' to '${newGitConfigPath}'`)
-      await io.cp(gitConfigPath, newGitConfigPath)
-    } else {
-      await fs.promises.writeFile(newGitConfigPath, '')
-    }
-
-    // Override HOME
-    core.info(
-      `Temporarily overriding HOME='${this.temporaryHomePath}' before making global git config changes`
+    await fs.promises.writeFile(
+      newGitConfigPath,
+      includes.length ? `[include]\n${includes.join('\n')}\n` : ''
     )
-    this.git.setEnvironmentVariable('HOME', this.temporaryHomePath)
+
+    // Isolate checkout's config writes without moving git-dedup's persistent store.
+    // Keep HOME and all git-dedup settings inherited from the runner.
+    core.info(
+      `Temporarily using '${newGitConfigPath}' for global git config changes`
+    )
+    this.git.setEnvironmentVariable('GIT_CONFIG_GLOBAL', newGitConfigPath)
 
     return newGitConfigPath
   }
@@ -237,8 +246,8 @@ class GitAuthHelper {
 
   async removeGlobalConfig(): Promise<void> {
     if (this.temporaryHomePath?.length > 0) {
-      core.debug(`Unsetting HOME override`)
-      this.git.removeEnvironmentVariable('HOME')
+      core.debug(`Unsetting temporary global config override`)
+      this.git.removeEnvironmentVariable('GIT_CONFIG_GLOBAL')
       await io.rmRF(this.temporaryHomePath)
     }
   }
