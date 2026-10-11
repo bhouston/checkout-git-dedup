@@ -1,3 +1,4 @@
+import {gitDedupCommand, gitDedupArgs} from './git-dedup-command.mjs'
 import assert from 'node:assert/strict'
 import {execFileSync, spawnSync} from 'node:child_process'
 import {readFile, readdir, realpath, stat} from 'node:fs/promises'
@@ -8,14 +9,14 @@ const repositories = process.argv.slice(2).map(p => resolve(p))
 assert.equal(repositories.length, 2)
 assert.equal(process.env.GIT_DEDUP_STORE, undefined, 'test the unconfigured default store')
 const objects = await realpath(join(homedir(), '.git-dedup', 'pool.git', 'objects'))
-const git = (repo, args) => execFileSync('git', ['-C', repo, ...args], {encoding: 'utf8'}).trim()
+const git = (repo, args) => execFileSync(gitDedupCommand, gitDedupArgs(['-C', repo, ...args]), {encoding: 'utf8'}).trim()
 let tip
 let history
 for (const repo of repositories) {
   assert.equal(git(repo, ['rev-parse', '--is-shallow-repository']), 'false')
   const currentTip = git(repo, ['rev-parse', 'HEAD'])
   const currentHistory = git(repo, ['rev-list', 'HEAD'])
-  assert.ok(currentHistory.split('\n').length > 1, 'fetch-depth must be upgraded to full history')
+  assert.ok(currentHistory.split('\n').length > 1, 'full-history checkout retains multiple commits')
   tip ??= currentTip
   history ??= currentHistory
   assert.equal(currentTip, tip)
@@ -24,7 +25,7 @@ for (const repo of repositories) {
   assert.equal(await realpath(alternate), objects)
   const packs = await readdir(join(repo, '.git', 'objects', 'pack'))
   assert.equal(packs.filter(name => name.endsWith('.pack')).length, 0, 'checkout borrows pool objects')
-  assert.notEqual(spawnSync('git', ['-C', repo, 'config', '--get', 'remote.origin.promisor']).status, 0)
+  assert.notEqual(spawnSync(gitDedupCommand, gitDedupArgs(['-C', repo, 'config', '--get', 'remote.origin.promisor'])).status, 0)
   git(repo, ['fsck', '--full'])
 }
 await assert.rejects(stat(join(repositories[1], '__test__')), {code: 'ENOENT'})

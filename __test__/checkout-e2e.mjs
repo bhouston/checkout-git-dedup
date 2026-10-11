@@ -4,6 +4,7 @@ import {createServer} from 'node:http'
 import {mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
+import {gitDedupCommand, gitDedupArgs} from './git-dedup-command.mjs'
 import {getSource, cleanup} from '../lib/git-source-provider.js'
 
 const root = await realpath(await mkdtemp(join(tmpdir(), 'checkout-dedup-')))
@@ -15,7 +16,7 @@ const remote = join(remotes, 'team', 'project')
 const env = {...process.env, HOME: home, USERPROFILE: home, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: join(home, '.gitconfig')}
 delete env.GIT_DEDUP_STORE
 delete env.GITX_STORE
-const git = (args, cwd = root) => execFileSync('git-dedup', args, {cwd, env: {...env, GIT_DEDUP_ACTIVE: '1'}, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim()
+const git = (args, cwd = root) => execFileSync(gitDedupCommand, gitDedupArgs(args), {cwd, env: {...env, GIT_DEDUP_ACTIVE: '1'}, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim()
 let server
 let packTransfers = 0
 let warmTransfers
@@ -50,7 +51,7 @@ try {
       response.end(JSON.stringify({hash_algorithm: 'sha1'}))
       return
     }
-    const child = spawn('git-dedup', ['http-backend'], {env: {...env, GIT_DEDUP_ACTIVE: '1', GIT_PROJECT_ROOT: remotes, GIT_HTTP_EXPORT_ALL: '1', PATH_INFO: url.pathname, QUERY_STRING: url.search.slice(1), REQUEST_METHOD: request.method, CONTENT_TYPE: request.headers['content-type'] || '', REMOTE_ADDR: '127.0.0.1', HTTP_GIT_PROTOCOL: request.headers['git-protocol'] || ''}, stdio: ['pipe', 'pipe', 'pipe']})
+    const child = spawn(gitDedupCommand, gitDedupArgs(['http-backend']), {env: {...env, GIT_DEDUP_ACTIVE: '1', GIT_PROJECT_ROOT: remotes, GIT_HTTP_EXPORT_ALL: '1', PATH_INFO: url.pathname, QUERY_STRING: url.search.slice(1), REQUEST_METHOD: request.method, CONTENT_TYPE: request.headers['content-type'] || '', REMOTE_ADDR: '127.0.0.1', HTTP_GIT_PROTOCOL: request.headers['git-protocol'] || ''}, stdio: ['pipe', 'pipe', 'pipe']})
     request.pipe(child.stdin)
     const chunks = []
     child.stdout.on('data', b => chunks.push(b))
