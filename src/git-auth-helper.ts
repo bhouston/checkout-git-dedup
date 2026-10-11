@@ -17,6 +17,7 @@ const SSH_COMMAND_KEY = 'core.sshCommand'
 
 export interface IGitAuthHelper {
   configureAuth(): Promise<void>
+  configurePoolAuth(): Promise<void>
   configureGlobalAuth(): Promise<void>
   configureSubmoduleAuth(): Promise<void>
   configureTempGlobalConfig(): Promise<string>
@@ -132,6 +133,23 @@ class GitAuthHelper {
     this.git.setEnvironmentVariable('GIT_CONFIG_GLOBAL', newGitConfigPath)
 
     return newGitConfigPath
+  }
+
+  async configurePoolAuth(): Promise<void> {
+    await this.configureTempGlobalConfig()
+    const home = process.env['HOME'] || os.homedir()
+    const store =
+      process.env['GIT_DEDUP_STORE'] || path.join(home, '.git-dedup')
+    const pool = path
+      .resolve(this.git.getWorkingDirectory(), store, 'pool.git')
+      .replace(/\\/g, '/')
+    // A repository-local include already supplies this header. Scope the global
+    // include to the pool so GitHub receives exactly one Authorization header.
+    await this.git.config(
+      `includeIf.gitdir:${pool}.path`,
+      this.getCredentialsConfigPath(),
+      true
+    )
   }
 
   async configureGlobalAuth(): Promise<void> {

@@ -35116,6 +35116,16 @@ class GitAuthHelper {
         this.git.setEnvironmentVariable('GIT_CONFIG_GLOBAL', newGitConfigPath);
         return newGitConfigPath;
     }
+    async configurePoolAuth() {
+        await this.configureTempGlobalConfig();
+        const home = process.env['HOME'] || external_os_namespaceObject.homedir();
+        const store = process.env['GIT_DEDUP_STORE'] || external_path_namespaceObject.join(home, '.git-dedup');
+        const pool = external_path_namespaceObject.resolve(this.git.getWorkingDirectory(), store, 'pool.git')
+            .replace(/\\/g, '/');
+        // A repository-local include already supplies this header. Scope the global
+        // include to the pool so GitHub receives exactly one Authorization header.
+        await this.git.config(`includeIf.gitdir:${pool}.path`, this.getCredentialsConfigPath(), true);
+    }
     async configureGlobalAuth() {
         // 'configureTempGlobalConfig' noops if already set, just returns the path
         await this.configureTempGlobalConfig();
@@ -41816,7 +41826,7 @@ async function getSource(settings) {
         const useObjectStore = settings.fetchDepth <= 0 && !settings.filter;
         if (useObjectStore) {
             startGroup('Joining the shared object store');
-            await authHelper.configureGlobalAuth();
+            await authHelper.configurePoolAuth();
             await git.adoptObjectStore();
             endGroup();
         }

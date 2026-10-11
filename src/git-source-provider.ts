@@ -157,7 +157,7 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
     const useObjectStore = settings.fetchDepth <= 0 && !settings.filter
     if (useObjectStore) {
       core.startGroup('Joining the shared object store')
-      await authHelper.configureGlobalAuth()
+      await authHelper.configurePoolAuth()
       await git.adoptObjectStore()
       core.endGroup()
     }

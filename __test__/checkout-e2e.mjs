@@ -43,6 +43,8 @@ try {
   // Real smart HTTP transport, including GitHub-compatible object-format lookup.
   server = createServer((request, response) => {
     const url = new URL(request.url, 'http://localhost')
+    const authorizations = request.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === 'authorization')
+    if (authorizations.length !== 1) { response.statusCode = 400; response.end('Expected exactly one Authorization header'); return }
     if (url.pathname.endsWith('/hash-algorithm')) {
       response.setHeader('Content-Type', 'application/json')
       response.end(JSON.stringify({hash_algorithm: 'sha1'}))
