@@ -35116,6 +35116,16 @@ class GitAuthHelper {
         this.git.setEnvironmentVariable('GIT_CONFIG_GLOBAL', newGitConfigPath);
         return newGitConfigPath;
     }
+    async configurePoolAuth() {
+        await this.configureTempGlobalConfig();
+        const home = process.env['HOME'] || external_os_namespaceObject.homedir();
+        const store = process.env['GIT_DEDUP_STORE'] || external_path_namespaceObject.join(home, '.git-dedup');
+        const pool = external_path_namespaceObject.resolve(this.git.getWorkingDirectory(), store, 'pool.git')
+            .replace(/\\/g, '/');
+        // A repository-local include already supplies this header. Scope the global
+        // include to the pool so GitHub receives exactly one Authorization header.
+        await this.git.config(`includeIf.gitdir:${pool}.path`, this.getCredentialsConfigPath(), true);
+    }
     async configureGlobalAuth() {
         // 'configureTempGlobalConfig' noops if already set, just returns the path
         await this.configureTempGlobalConfig();
@@ -35172,12 +35182,12 @@ class GitAuthHelper {
             }
             if (this.settings.sshKey) {
                 // Configure core.sshCommand
-                await this.git.submoduleForeach(`git config --local '${SSH_COMMAND_KEY}' '${this.sshCommand}'`, this.settings.nestedSubmodules);
+                await this.git.submoduleForeach(`git-dedup config --local '${SSH_COMMAND_KEY}' '${this.sshCommand}'`, this.settings.nestedSubmodules);
             }
             else {
                 // Configure HTTPS instead of SSH
                 for (const insteadOfValue of this.insteadOfValues) {
-                    await this.git.submoduleForeach(`git config --local --add '${this.insteadOfKey}' '${insteadOfValue}'`, this.settings.nestedSubmodules);
+                    await this.git.submoduleForeach(`git-dedup config --local --add '${this.insteadOfKey}' '${insteadOfValue}'`, this.settings.nestedSubmodules);
                 }
             }
         }
@@ -35419,7 +35429,7 @@ class GitAuthHelper {
         const pattern = regexp_helper_escape(configKey);
         await this.git.submoduleForeach(
         // Wrap the pipeline in quotes to make sure it's handled properly by submoduleForeach, rather than just the first part of the pipeline.
-        `sh -c "git config --local --name-only --get-regexp '${pattern}' && git config --local --unset-all '${configKey}' || :"`, true);
+        `sh -c "git-dedup config --local --name-only --get-regexp '${pattern}' && git-dedup config --local --unset-all '${configKey}' || :"`, true);
     }
     /**
      * Removes includeIf entries that point to git-credentials-*.config files.
@@ -35752,6 +35762,9 @@ class GitCommandManager {
         ], true);
         return output.exitCode === 0;
     }
+    async adoptObjectStore() {
+        await this.execGit(['store', 'add', '.']);
+    }
     async fetch(refSpec, options) {
         const args = ['-c', 'protocol.version=2', 'fetch'];
         // Always use --no-tags for explicit control over tag fetching
@@ -35807,7 +35820,7 @@ class GitCommandManager {
     async getSubmoduleConfigPaths(recursive) {
         // Get submodule config file paths.
         // Use `--show-origin` to get the config file path for each submodule.
-        const output = await this.submoduleForeach(`git config --local --show-origin --name-only --get-regexp remote.origin.url`, recursive);
+        const output = await this.submoduleForeach(`git-dedup config --local --show-origin --name-only --get-regexp remote.origin.url`, recursive);
         // Extract config file paths from the output (lines starting with "file:").
         const configPaths = output.match(/(?<=(^|\n)file:)[^\t]+(?=\tremote\.origin\.url)/g) || [];
         return configPaths;
@@ -41806,6 +41819,17 @@ async function getSource(settings) {
         startGroup('Setting up auth');
         await authHelper.configureAuth();
         endGroup();
+        // The native git-dedup CLI forwards fetch. Link to the pool before fetching
+        // so Git can negotiate from objects already cached by other checkouts.
+        // Partial/shallow requests preserve upstream behavior; full sparse checkouts
+        // still use a complete object database and limit only working-tree files.
+        const useObjectStore = settings.fetchDepth <= 0 && !settings.filter;
+        if (useObjectStore) {
+            startGroup('Joining the shared object store');
+            await authHelper.configurePoolAuth();
+            await git.adoptObjectStore();
+            endGroup();
+        }
         // Determine the default branch
         if (!settings.ref && !settings.commit) {
             startGroup('Determining the default branch');
@@ -41827,7 +41851,7 @@ async function getSource(settings) {
         if (settings.filter) {
             fetchOptions.filter = settings.filter;
         }
-        else if (settings.sparseCheckout) {
+        else if (settings.sparseCheckout && !useObjectStore) {
             fetchOptions.filter = 'blob:none';
         }
         if (settings.fetchDepth <= 0) {
@@ -41861,6 +41885,11 @@ async function getSource(settings) {
             }
         }
         endGroup();
+        if (useObjectStore) {
+            startGroup('Pinning fetched history in the shared object store');
+            await git.adoptObjectStore();
+            endGroup();
+        }
         // Checkout info
         startGroup('Determining the checkout info');
         const checkoutInfo = await getCheckoutInfo(git, settings.ref, settings.commit);

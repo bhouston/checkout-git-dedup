@@ -33,24 +33,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-      # Provision the runner executable, as self-hosted runners do once.
-      # This commit includes pool-backed fetch support; npm 2.1.0 predates it.
-      - uses: actions/checkout@v7
-        with:
-          repository: bhouston/git-dedup
-          ref: 05b6152df26c03fd97bd95e3d100db0123d350af
-          path: .test-tools/git-dedup
-          persist-credentials: false
-      - uses: pnpm/action-setup@v5
-        with:
-          version: 11.1.3
       - uses: actions/setup-node@v6
         with:
           node-version: 24.x
-      - run: pnpm --dir .test-tools/git-dedup install --frozen-lockfile
-      - run: pnpm --dir .test-tools/git-dedup build
-      - run: npm link --ignore-scripts
-        working-directory: .test-tools/git-dedup/packages/cli
+      - run: npm install --global git-dedup@3.0.2
       - run: npm ci
       - run: npm run build
       - run: npm run test:e2e
@@ -58,13 +44,12 @@ jobs:
         uses: ./
         with:
           path: dedup-first
-          fetch-depth: 1
+          fetch-depth: 0
       - name: Second checkout reusing the default store
         uses: ./
         with:
           path: dedup-second
-          fetch-depth: 10
-          filter: tree:0
+          fetch-depth: 00
           sparse-checkout: |
             src
             .github
@@ -72,8 +57,7 @@ jobs:
         uses: ./
         with:
           path: dedup-first
-          fetch-depth: 50
-          filter: blob:none
+          fetch-depth: 0
           persist-credentials: false
       - name: Verify full history, shared objects and sparse files
         run: node __test__/verify-git-dedup.mjs dedup-first dedup-second

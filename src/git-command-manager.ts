@@ -26,6 +26,7 @@ export class GitDedupNotFoundError extends Error {
 }
 
 export interface IGitCommandManager {
+  adoptObjectStore(): Promise<void>
   branchDelete(remote: boolean, branch: string): Promise<void>
   branchExists(remote: boolean, pattern: string): Promise<boolean>
   branchList(remote: boolean): Promise<string[]>
@@ -284,6 +285,10 @@ class GitCommandManager {
     return output.exitCode === 0
   }
 
+  async adoptObjectStore(): Promise<void> {
+    await this.execGit(['store', 'add', '.'])
+  }
+
   async fetch(
     refSpec: string[],
     options: {
@@ -359,7 +364,7 @@ class GitCommandManager {
     // Get submodule config file paths.
     // Use `--show-origin` to get the config file path for each submodule.
     const output = await this.submoduleForeach(
-      `git config --local --show-origin --name-only --get-regexp remote.origin.url`,
+      `git-dedup config --local --show-origin --name-only --get-regexp remote.origin.url`,
       recursive
     )
 

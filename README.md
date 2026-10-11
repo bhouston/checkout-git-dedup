@@ -11,9 +11,16 @@ steps:
 
 Install git-dedup on the runner once, alongside native Git. No `git` shim or action-specific configuration is required. The action uses the runner's existing git-dedup settings, including `GIT_DEDUP_STORE` and `git-dedup.gitPath`; the default shared store stays in `~/.git-dedup`. Keep that store between jobs on a self-hosted runner to reuse objects across CI runs. The wrapper and its Node.js runtime must be on the runner's `PATH`, including the post-job cleanup step.
 
-Use a git-dedup build with pool-backed fetch support ([git-dedup#144](https://github.com/bhouston/git-dedup/pull/144), currently available on `main`). The npm 2.1.0 release predates that feature. Native Git is still required, and the action itself uses the Node.js 24 Actions runtime.
+Use the globally installed git-dedup 3.x native CLI and request full history:
 
-All upstream checkout inputs and outputs remain available. git-dedup upgrades bandwidth-oriented depth and supported partial-clone filter requests to full history through its store; sparse checkout still limits working-tree files. This does not automatically create local branches or tags beyond the requested refspecs. A missing git-dedup installation fails with an installation message rather than silently bypassing caching.
+```yaml
+- uses: bhouston/checkout-git-dedup@main
+  with:
+    fetch-depth: 0
+    persist-credentials: false
+```
+
+Full-history checkouts join the shared object pool **before** fetching, reuse cached objects during fetch, and pin fetched refs afterward. Sparse checkout with full history limits files without partially cloning the object database. Explicit shallow or partial-clone requests preserve upstream Git behavior and do not receive the full-history adoption path. The native wrapper and this action still require native Git and the Node.js 24 Actions runtime.
 
 Checkout authentication and post-job cleanup follow upstream. Temporary global Git configuration includes the runner's settings (including XDG and nested includes) while preserving `HOME`, so checkout does not redirect the default store into a temporary directory. The runner's permanent global configuration is left intact.
 
@@ -94,8 +101,9 @@ Checkout authentication and post-job cleanup follow upstream. Temporary global G
     # Default: true
     sparse-checkout-cone-mode: ''
 
-    # Number of commits requested. git-dedup upgrades supported shallow fetches to
-    # full history from its shared store. 0 fetches all branches and tags.
+    # Number of commits requested. Set 0 for full history backed by the shared
+    # git-dedup object store. Explicit shallow requests preserve upstream Git
+    # behavior.
     # Default: 1
     fetch-depth: ''
 

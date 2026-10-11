@@ -150,6 +150,18 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
     await authHelper.configureAuth()
     core.endGroup()
 
+    // The native git-dedup CLI forwards fetch. Link to the pool before fetching
+    // so Git can negotiate from objects already cached by other checkouts.
+    // Partial/shallow requests preserve upstream behavior; full sparse checkouts
+    // still use a complete object database and limit only working-tree files.
+    const useObjectStore = settings.fetchDepth <= 0 && !settings.filter
+    if (useObjectStore) {
+      core.startGroup('Joining the shared object store')
+      await authHelper.configurePoolAuth()
+      await git.adoptObjectStore()
+      core.endGroup()
+    }
+
     // Determine the default branch
     if (!settings.ref && !settings.commit) {
       core.startGroup('Determining the default branch')
@@ -181,7 +193,7 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
 
     if (settings.filter) {
       fetchOptions.filter = settings.filter
-    } else if (settings.sparseCheckout) {
+    } else if (settings.sparseCheckout && !useObjectStore) {
       fetchOptions.filter = 'blob:none'
     }
 
@@ -229,6 +241,12 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
       }
     }
     core.endGroup()
+
+    if (useObjectStore) {
+      core.startGroup('Pinning fetched history in the shared object store')
+      await git.adoptObjectStore()
+      core.endGroup()
+    }
 
     // Checkout info
     core.startGroup('Determining the checkout info')

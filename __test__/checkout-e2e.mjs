@@ -4,6 +4,7 @@ import {createServer} from 'node:http'
 import {mkdtemp, mkdir, readFile, readdir, realpath, rm, stat, writeFile} from 'node:fs/promises'
 import {tmpdir} from 'node:os'
 import {join} from 'node:path'
+import {gitDedupCommand, gitDedupArgs} from './git-dedup-command.mjs'
 import {getSource, cleanup} from '../lib/git-source-provider.js'
 
 const root = await realpath(await mkdtemp(join(tmpdir(), 'checkout-dedup-')))
@@ -15,8 +16,10 @@ const remote = join(remotes, 'team', 'project')
 const env = {...process.env, HOME: home, USERPROFILE: home, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: join(home, '.gitconfig')}
 delete env.GIT_DEDUP_STORE
 delete env.GITX_STORE
-const git = (args, cwd = root) => execFileSync('git', args, {cwd, env: {...env, GIT_DEDUP_ACTIVE: '1'}, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim()
+const git = (args, cwd = root) => execFileSync(gitDedupCommand, gitDedupArgs(args), {cwd, env: {...env, GIT_DEDUP_ACTIVE: '1'}, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe']}).trim()
 let server
+let packTransfers = 0
+let warmTransfers
 try {
   await Promise.all([mkdir(home), mkdir(runnerTemp), mkdir(join(remotes, 'team'), {recursive: true})])
   await writeFile(join(home, '.gitconfig'), '[include]\n path = runner-settings.gitconfig\n')
@@ -41,17 +44,20 @@ try {
   // Real smart HTTP transport, including GitHub-compatible object-format lookup.
   server = createServer((request, response) => {
     const url = new URL(request.url, 'http://localhost')
+    const authorizations = request.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === 'authorization')
+    if (authorizations.length !== 1) { response.statusCode = 400; response.end('Expected exactly one Authorization header'); return }
     if (url.pathname.endsWith('/hash-algorithm')) {
       response.setHeader('Content-Type', 'application/json')
       response.end(JSON.stringify({hash_algorithm: 'sha1'}))
       return
     }
-    const child = spawn('git', ['http-backend'], {env: {...env, GIT_DEDUP_ACTIVE: '1', GIT_PROJECT_ROOT: remotes, GIT_HTTP_EXPORT_ALL: '1', PATH_INFO: url.pathname, QUERY_STRING: url.search.slice(1), REQUEST_METHOD: request.method, CONTENT_TYPE: request.headers['content-type'] || '', REMOTE_ADDR: '127.0.0.1', HTTP_GIT_PROTOCOL: request.headers['git-protocol'] || ''}, stdio: ['pipe', 'pipe', 'pipe']})
+    const child = spawn(gitDedupCommand, gitDedupArgs(['http-backend']), {env: {...env, GIT_DEDUP_ACTIVE: '1', GIT_PROJECT_ROOT: remotes, GIT_HTTP_EXPORT_ALL: '1', PATH_INFO: url.pathname, QUERY_STRING: url.search.slice(1), REQUEST_METHOD: request.method, CONTENT_TYPE: request.headers['content-type'] || '', REMOTE_ADDR: '127.0.0.1', HTTP_GIT_PROTOCOL: request.headers['git-protocol'] || ''}, stdio: ['pipe', 'pipe', 'pipe']})
     request.pipe(child.stdin)
     const chunks = []
     child.stdout.on('data', b => chunks.push(b))
     child.on('close', code => {
       const output = Buffer.concat(chunks)
+      if (output.includes(Buffer.from('PACK'))) packTransfers++
       const split = output.indexOf('\r\n\r\n')
       if (code !== 0 || split < 0) { response.statusCode = 500; response.end('Git backend failed'); return }
       for (const line of output.subarray(0, split).toString().split('\r\n')) {
@@ -68,8 +74,8 @@ try {
   Object.assign(process.env, env, {RUNNER_TEMP: runnerTemp, GITHUB_WORKSPACE: root})
   delete process.env.GIT_DEDUP_STORE
   delete process.env.GITX_STORE
-  const settings = {repositoryOwner: 'team', repositoryName: 'project', ref: 'refs/heads/main', commit: '', clean: true, fetchDepth: 1, fetchTags: false, showProgress: false, lfs: false, submodules: false, nestedSubmodules: false, authToken: 'test-token', sshKey: '', sshKnownHosts: '', sshStrict: true, sshUser: 'git', persistCredentials: true, setSafeDirectory: true, githubServerUrl: `http://127.0.0.1:${server.address().port}`, sparseCheckoutConeMode: true}
-  for (const [name, overrides] of [['first', {}], ['second', {fetchDepth: 10, filter: 'tree:0', sparseCheckout: ['src']}], ['first', {fetchDepth: 50, filter: 'blob:none', persistCredentials: false}]]) {
+  const settings = {repositoryOwner: 'team', repositoryName: 'project', ref: 'refs/heads/main', commit: '', clean: true, fetchDepth: 0, fetchTags: false, showProgress: false, lfs: false, submodules: false, nestedSubmodules: false, authToken: 'test-token', sshKey: '', sshKnownHosts: '', sshStrict: true, sshUser: 'git', persistCredentials: true, setSafeDirectory: true, githubServerUrl: `http://127.0.0.1:${server.address().port}`, sparseCheckoutConeMode: true}
+  for (const [name, overrides] of [['first', {}], ['second', {fetchDepth: 0, sparseCheckout: ['src']}], ['first', {fetchDepth: 0, persistCredentials: false}]]) {
     const repo = join(root, name)
     await getSource({...settings, repositoryPath: repo, ...overrides})
     assert.equal(git(['rev-parse', '--is-shallow-repository'], repo), 'false')
@@ -78,6 +84,8 @@ try {
     assert.equal(await realpath(alternate), await realpath(join(home, '.git-dedup', 'pool.git', 'objects')))
     assert.equal((await readdir(join(repo, '.git', 'objects', 'pack'))).filter(p => p.endsWith('.pack')).length, 0)
     git(['fsck', '--full'], repo)
+    if (warmTransfers === undefined) { assert.ok(packTransfers > 0); warmTransfers = packTransfers }
+    else assert.equal(packTransfers, warmTransfers, 'warm action checkouts must not download another pack')
   }
   await assert.rejects(stat(join(root, 'second', 'extra', 'file.txt')), {code: 'ENOENT'})
   await stat(join(root, 'second', 'src', 'file.txt'))
