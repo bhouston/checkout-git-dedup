@@ -35752,6 +35752,9 @@ class GitCommandManager {
         ], true);
         return output.exitCode === 0;
     }
+    async adoptObjectStore() {
+        await this.execGit(['store', 'add', '.']);
+    }
     async fetch(refSpec, options) {
         const args = ['-c', 'protocol.version=2', 'fetch'];
         // Always use --no-tags for explicit control over tag fetching
@@ -41806,6 +41809,17 @@ async function getSource(settings) {
         startGroup('Setting up auth');
         await authHelper.configureAuth();
         endGroup();
+        // The native git-dedup CLI forwards fetch. Link to the pool before fetching
+        // so Git can negotiate from objects already cached by other checkouts.
+        // Partial/shallow requests preserve upstream behavior; full sparse checkouts
+        // still use a complete object database and limit only working-tree files.
+        const useObjectStore = settings.fetchDepth <= 0 && !settings.filter;
+        if (useObjectStore) {
+            startGroup('Joining the shared object store');
+            await authHelper.configureGlobalAuth();
+            await git.adoptObjectStore();
+            endGroup();
+        }
         // Determine the default branch
         if (!settings.ref && !settings.commit) {
             startGroup('Determining the default branch');
@@ -41827,7 +41841,7 @@ async function getSource(settings) {
         if (settings.filter) {
             fetchOptions.filter = settings.filter;
         }
-        else if (settings.sparseCheckout) {
+        else if (settings.sparseCheckout && !useObjectStore) {
             fetchOptions.filter = 'blob:none';
         }
         if (settings.fetchDepth <= 0) {
@@ -41861,6 +41875,11 @@ async function getSource(settings) {
             }
         }
         endGroup();
+        if (useObjectStore) {
+            startGroup('Pinning fetched history in the shared object store');
+            await git.adoptObjectStore();
+            endGroup();
+        }
         // Checkout info
         startGroup('Determining the checkout info');
         const checkoutInfo = await getCheckoutInfo(git, settings.ref, settings.commit);

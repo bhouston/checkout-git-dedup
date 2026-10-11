@@ -26,6 +26,7 @@ export class GitDedupNotFoundError extends Error {
 }
 
 export interface IGitCommandManager {
+  adoptObjectStore(): Promise<void>
   branchDelete(remote: boolean, branch: string): Promise<void>
   branchExists(remote: boolean, pattern: string): Promise<boolean>
   branchList(remote: boolean): Promise<string[]>
@@ -282,6 +283,10 @@ class GitCommandManager {
       true
     )
     return output.exitCode === 0
+  }
+
+  async adoptObjectStore(): Promise<void> {
+    await this.execGit(['store', 'add', '.'])
   }
 
   async fetch(
