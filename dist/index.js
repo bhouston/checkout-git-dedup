@@ -35182,12 +35182,12 @@ class GitAuthHelper {
             }
             if (this.settings.sshKey) {
                 // Configure core.sshCommand
-                await this.git.submoduleForeach(`git config --local '${SSH_COMMAND_KEY}' '${this.sshCommand}'`, this.settings.nestedSubmodules);
+                await this.git.submoduleForeach(`git-dedup config --local '${SSH_COMMAND_KEY}' '${this.sshCommand}'`, this.settings.nestedSubmodules);
             }
             else {
                 // Configure HTTPS instead of SSH
                 for (const insteadOfValue of this.insteadOfValues) {
-                    await this.git.submoduleForeach(`git config --local --add '${this.insteadOfKey}' '${insteadOfValue}'`, this.settings.nestedSubmodules);
+                    await this.git.submoduleForeach(`git-dedup config --local --add '${this.insteadOfKey}' '${insteadOfValue}'`, this.settings.nestedSubmodules);
                 }
             }
         }
@@ -35429,7 +35429,7 @@ class GitAuthHelper {
         const pattern = regexp_helper_escape(configKey);
         await this.git.submoduleForeach(
         // Wrap the pipeline in quotes to make sure it's handled properly by submoduleForeach, rather than just the first part of the pipeline.
-        `sh -c "git config --local --name-only --get-regexp '${pattern}' && git config --local --unset-all '${configKey}' || :"`, true);
+        `sh -c "git-dedup config --local --name-only --get-regexp '${pattern}' && git-dedup config --local --unset-all '${configKey}' || :"`, true);
     }
     /**
      * Removes includeIf entries that point to git-credentials-*.config files.
@@ -35820,7 +35820,7 @@ class GitCommandManager {
     async getSubmoduleConfigPaths(recursive) {
         // Get submodule config file paths.
         // Use `--show-origin` to get the config file path for each submodule.
-        const output = await this.submoduleForeach(`git config --local --show-origin --name-only --get-regexp remote.origin.url`, recursive);
+        const output = await this.submoduleForeach(`git-dedup config --local --show-origin --name-only --get-regexp remote.origin.url`, recursive);
         // Extract config file paths from the output (lines starting with "file:").
         const configPaths = output.match(/(?<=(^|\n)file:)[^\t]+(?=\tremote\.origin\.url)/g) || [];
         return configPaths;

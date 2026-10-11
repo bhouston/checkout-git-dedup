@@ -364,7 +364,7 @@ class GitCommandManager {
     // Get submodule config file paths.
     // Use `--show-origin` to get the config file path for each submodule.
     const output = await this.submoduleForeach(
-      `git config --local --show-origin --name-only --get-regexp remote.origin.url`,
+      `git-dedup config --local --show-origin --name-only --get-regexp remote.origin.url`,
       recursive
     )
 

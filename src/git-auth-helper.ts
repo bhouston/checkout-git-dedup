@@ -242,14 +242,14 @@ class GitAuthHelper {
       if (this.settings.sshKey) {
         // Configure core.sshCommand
         await this.git.submoduleForeach(
-          `git config --local '${SSH_COMMAND_KEY}' '${this.sshCommand}'`,
+          `git-dedup config --local '${SSH_COMMAND_KEY}' '${this.sshCommand}'`,
           this.settings.nestedSubmodules
         )
       } else {
         // Configure HTTPS instead of SSH
         for (const insteadOfValue of this.insteadOfValues) {
           await this.git.submoduleForeach(
-            `git config --local --add '${this.insteadOfKey}' '${insteadOfValue}'`,
+            `git-dedup config --local --add '${this.insteadOfKey}' '${insteadOfValue}'`,
             this.settings.nestedSubmodules
           )
         }
@@ -563,7 +563,7 @@ class GitAuthHelper {
     const pattern = regexpHelper.escape(configKey)
     await this.git.submoduleForeach(
       // Wrap the pipeline in quotes to make sure it's handled properly by submoduleForeach, rather than just the first part of the pipeline.
-      `sh -c "git config --local --name-only --get-regexp '${pattern}' && git config --local --unset-all '${configKey}' || :"`,
+      `sh -c "git-dedup config --local --name-only --get-regexp '${pattern}' && git-dedup config --local --unset-all '${configKey}' || :"`,
       true
     )
   }
