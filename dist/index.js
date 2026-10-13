@@ -34968,11 +34968,15 @@ function getFetchUrl(settings) {
     const encodedOwner = encodeURIComponent(settings.repositoryOwner);
     const encodedName = encodeURIComponent(settings.repositoryName);
     if (settings.sshKey) {
-        const user = settings.sshUser.length > 0 ? settings.sshUser : 'git';
-        return `${user}@${serviceUrl.hostname}:${encodedOwner}/${encodedName}.git`;
+        return getSshUrl(settings);
     }
     // "origin" is SCHEME://HOSTNAME[:PORT]
     return `${serviceUrl.origin}/${encodedOwner}/${encodedName}`;
+}
+function getSshUrl(settings) {
+    const serviceUrl = getServerUrl(settings.githubServerUrl);
+    const user = settings.sshUser?.length > 0 ? settings.sshUser : 'git';
+    return `${user}@${serviceUrl.hostname}:${encodeURIComponent(settings.repositoryOwner)}/${encodeURIComponent(settings.repositoryName)}.git`;
 }
 function getServerUrl(url) {
     let resolvedUrl = process.env['GITHUB_SERVER_URL'] || 'https://github.com';
@@ -35115,16 +35119,6 @@ class GitAuthHelper {
         info(`Temporarily using '${newGitConfigPath}' for global git config changes`);
         this.git.setEnvironmentVariable('GIT_CONFIG_GLOBAL', newGitConfigPath);
         return newGitConfigPath;
-    }
-    async configurePoolAuth() {
-        await this.configureTempGlobalConfig();
-        const home = process.env['HOME'] || external_os_namespaceObject.homedir();
-        const store = process.env['GIT_DEDUP_STORE'] || external_path_namespaceObject.join(home, '.git-dedup');
-        const pool = external_path_namespaceObject.resolve(this.git.getWorkingDirectory(), store, 'pool.git')
-            .replace(/\\/g, '/');
-        // A repository-local include already supplies this header. Scope the global
-        // include to the pool so GitHub receives exactly one Authorization header.
-        await this.git.config(`includeIf.gitdir:${pool}.path`, this.getCredentialsConfigPath(), true);
     }
     async configureGlobalAuth() {
         // 'configureTempGlobalConfig' noops if already set, just returns the path
@@ -35762,8 +35756,8 @@ class GitCommandManager {
         ], true);
         return output.exitCode === 0;
     }
-    async adoptObjectStore() {
-        await this.execGit(['store', 'add', '.']);
+    async clone(repositoryUrl) {
+        await this.execGit(['clone', repositoryUrl, this.workingDirectory]);
     }
     async fetch(refSpec, options) {
         const args = ['-c', 'protocol.version=2', 'fetch'];
@@ -41735,10 +41729,17 @@ function ref_helper_select(obj, path) {
 
 
 
+
 async function getSource(settings) {
     // Repository URL
     info(`Syncing repository: ${settings.repositoryOwner}/${settings.repositoryName}`);
-    const repositoryUrl = getFetchUrl(settings);
+    // Full history is cloned over SSH with the runner's own key through git-dedup,
+    // which borrows objects from the runner's shared store. Shallow and partial
+    // checkouts keep upstream behavior.
+    const cloneFromStore = settings.fetchDepth <= 0 && !settings.filter;
+    const repositoryUrl = cloneFromStore
+        ? getSshUrl(settings)
+        : getFetchUrl(settings);
     // Remove conflicting file path
     if (fileExistsSync(settings.repositoryPath)) {
         await rmRF(settings.repositoryPath);
@@ -41771,7 +41772,13 @@ async function getSource(settings) {
             }
         }
         // Prepare existing directory, otherwise recreate
-        if (isExisting) {
+        if (cloneFromStore) {
+            // git-dedup clone needs an empty directory.
+            for (const entry of await external_fs_namespaceObject.promises.readdir(settings.repositoryPath)) {
+                await rmRF(external_path_namespaceObject.join(settings.repositoryPath, entry));
+            }
+        }
+        else if (isExisting) {
             await prepareExistingDirectory(git, settings.repositoryPath, repositoryUrl, settings.clean, settings.ref);
         }
         if (!git) {
@@ -41790,7 +41797,12 @@ async function getSource(settings) {
         // Save state for POST action
         setRepositoryPath(settings.repositoryPath);
         // Initialize the repository
-        if (!directoryExistsSync(external_path_namespaceObject.join(settings.repositoryPath, '.git'))) {
+        if (cloneFromStore) {
+            startGroup('Cloning from the shared object store');
+            await git.clone(repositoryUrl);
+            endGroup();
+        }
+        else if (!directoryExistsSync(external_path_namespaceObject.join(settings.repositoryPath, '.git'))) {
             startGroup('Determining repository object format');
             const objectFormatResult = await tryGetRepositoryObjectFormat(settings.authToken, settings.repositoryOwner, settings.repositoryName, settings.githubServerUrl, settings.commit);
             const objectFormat = objectFormatResult.succeeded
@@ -41819,17 +41831,6 @@ async function getSource(settings) {
         startGroup('Setting up auth');
         await authHelper.configureAuth();
         endGroup();
-        // The native git-dedup CLI forwards fetch. Link to the pool before fetching
-        // so Git can negotiate from objects already cached by other checkouts.
-        // Partial/shallow requests preserve upstream behavior; full sparse checkouts
-        // still use a complete object database and limit only working-tree files.
-        const useObjectStore = settings.fetchDepth <= 0 && !settings.filter;
-        if (useObjectStore) {
-            startGroup('Joining the shared object store');
-            await authHelper.configurePoolAuth();
-            await git.adoptObjectStore();
-            endGroup();
-        }
         // Determine the default branch
         if (!settings.ref && !settings.commit) {
             startGroup('Determining the default branch');
@@ -41851,7 +41852,7 @@ async function getSource(settings) {
         if (settings.filter) {
             fetchOptions.filter = settings.filter;
         }
-        else if (settings.sparseCheckout && !useObjectStore) {
+        else if (settings.sparseCheckout && !cloneFromStore) {
             fetchOptions.filter = 'blob:none';
         }
         if (settings.fetchDepth <= 0) {
@@ -41885,11 +41886,6 @@ async function getSource(settings) {
             }
         }
         endGroup();
-        if (useObjectStore) {
-            startGroup('Pinning fetched history in the shared object store');
-            await git.adoptObjectStore();
-            endGroup();
-        }
         // Checkout info
         startGroup('Determining the checkout info');
         const checkoutInfo = await getCheckoutInfo(git, settings.ref, settings.commit);

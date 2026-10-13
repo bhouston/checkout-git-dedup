@@ -26,7 +26,6 @@ export class GitDedupNotFoundError extends Error {
 }
 
 export interface IGitCommandManager {
-  adoptObjectStore(): Promise<void>
   branchDelete(remote: boolean, branch: string): Promise<void>
   branchExists(remote: boolean, pattern: string): Promise<boolean>
   branchList(remote: boolean): Promise<string[]>
@@ -34,6 +33,7 @@ export interface IGitCommandManager {
   sparseCheckout(sparseCheckout: string[]): Promise<void>
   sparseCheckoutNonConeMode(sparseCheckout: string[]): Promise<void>
   checkout(ref: string, startPoint: string): Promise<void>
+  clone(repositoryUrl: string): Promise<void>
   checkoutDetach(): Promise<void>
   config(
     configKey: string,
@@ -285,8 +285,8 @@ class GitCommandManager {
     return output.exitCode === 0
   }
 
-  async adoptObjectStore(): Promise<void> {
-    await this.execGit(['store', 'add', '.'])
+  async clone(repositoryUrl: string): Promise<void> {
+    await this.execGit(['clone', repositoryUrl, this.workingDirectory])
   }
 
   async fetch(

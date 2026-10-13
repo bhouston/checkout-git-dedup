@@ -1,4 +1,5 @@
 import * as core from '@actions/core'
+import * as fs from 'fs'
 import * as fsHelper from './fs-helper.js'
 import * as gitAuthHelper from './git-auth-helper.js'
 import * as gitCommandManager from './git-command-manager.js'
@@ -20,7 +21,13 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
   core.info(
     `Syncing repository: ${settings.repositoryOwner}/${settings.repositoryName}`
   )
-  const repositoryUrl = urlHelper.getFetchUrl(settings)
+  // Full history is cloned over SSH with the runner's own key through git-dedup,
+  // which borrows objects from the runner's shared store. Shallow and partial
+  // checkouts keep upstream behavior.
+  const cloneFromStore = settings.fetchDepth <= 0 && !settings.filter
+  const repositoryUrl = cloneFromStore
+    ? urlHelper.getSshUrl(settings)
+    : urlHelper.getFetchUrl(settings)
 
   // Remove conflicting file path
   if (fsHelper.fileExistsSync(settings.repositoryPath)) {
@@ -64,7 +71,12 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
     }
 
     // Prepare existing directory, otherwise recreate
-    if (isExisting) {
+    if (cloneFromStore) {
+      // git-dedup clone needs an empty directory.
+      for (const entry of await fs.promises.readdir(settings.repositoryPath)) {
+        await io.rmRF(path.join(settings.repositoryPath, entry))
+      }
+    } else if (isExisting) {
       await gitDirectoryHelper.prepareExistingDirectory(
         git,
         settings.repositoryPath,
@@ -106,7 +118,11 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
     stateHelper.setRepositoryPath(settings.repositoryPath)
 
     // Initialize the repository
-    if (
+    if (cloneFromStore) {
+      core.startGroup('Cloning from the shared object store')
+      await git.clone(repositoryUrl)
+      core.endGroup()
+    } else if (
       !fsHelper.directoryExistsSync(path.join(settings.repositoryPath, '.git'))
     ) {
       core.startGroup('Determining repository object format')
@@ -150,18 +166,6 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
     await authHelper.configureAuth()
     core.endGroup()
 
-    // The native git-dedup CLI forwards fetch. Link to the pool before fetching
-    // so Git can negotiate from objects already cached by other checkouts.
-    // Partial/shallow requests preserve upstream behavior; full sparse checkouts
-    // still use a complete object database and limit only working-tree files.
-    const useObjectStore = settings.fetchDepth <= 0 && !settings.filter
-    if (useObjectStore) {
-      core.startGroup('Joining the shared object store')
-      await authHelper.configurePoolAuth()
-      await git.adoptObjectStore()
-      core.endGroup()
-    }
-
     // Determine the default branch
     if (!settings.ref && !settings.commit) {
       core.startGroup('Determining the default branch')
@@ -193,7 +197,7 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
 
     if (settings.filter) {
       fetchOptions.filter = settings.filter
-    } else if (settings.sparseCheckout && !useObjectStore) {
+    } else if (settings.sparseCheckout && !cloneFromStore) {
       fetchOptions.filter = 'blob:none'
     }
 
@@ -241,12 +245,6 @@ export async function getSource(settings: IGitSourceSettings): Promise<void> {
       }
     }
     core.endGroup()
-
-    if (useObjectStore) {
-      core.startGroup('Pinning fetched history in the shared object store')
-      await git.adoptObjectStore()
-      core.endGroup()
-    }
 
     // Checkout info
     core.startGroup('Determining the checkout info')
