@@ -41,7 +41,7 @@ jobs:
       - run: npm run build
       - run: npm run test:e2e
       # Hosted runners have no SSH key; full-history checkouts clone this public repo over HTTPS instead.
-      - run: git config --global url.https://github.com/.insteadOf git@github.com:
+      - run: 'git config --global url.https://github.com/.insteadOf git@github.com:'
       - name: First checkout using the default store
         uses: ./
         with:
