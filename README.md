@@ -20,7 +20,7 @@ Use the globally installed git-dedup 3.x native CLI and request full history:
     persist-credentials: false
 ```
 
-Full-history checkouts join the shared object pool **before** fetching, reuse cached objects during fetch, and pin fetched refs afterward. Sparse checkout with full history limits files without partially cloning the object database. Explicit shallow or partial-clone requests preserve upstream Git behavior and do not receive the full-history adoption path. The native wrapper and this action still require native Git and the Node.js 24 Actions runtime.
+A full-history checkout (`fetch-depth: 0`) empties the target directory and runs `git-dedup clone git@github.com:<owner>/<repo>.git`, which borrows every cached object from the shared store, then fetches and checks out the requested ref. It authenticates with the runner user's own SSH key, so that user must be able to run `ssh -T git@github.com`; the `token` input is not used for the clone. On a runner without an SSH key, map SSH to HTTPS with `git config --global url.https://github.com/.insteadOf git@github.com:`, which works for public repositories. Sparse checkout with full history limits files without partially cloning the object database. Shallow or partial-clone requests (`filter`) preserve upstream Git behavior. The native wrapper and this action still require native Git and the Node.js 24 Actions runtime.
 
 Checkout authentication and post-job cleanup follow upstream. Temporary global Git configuration includes the runner's settings (including XDG and nested includes) while preserving `HOME`, so checkout does not redirect the default store into a temporary directory. The runner's permanent global configuration is left intact.
 
@@ -101,9 +101,9 @@ Checkout authentication and post-job cleanup follow upstream. Temporary global G
     # Default: true
     sparse-checkout-cone-mode: ''
 
-    # Number of commits requested. Set 0 for full history backed by the shared
-    # git-dedup object store. Explicit shallow requests preserve upstream Git
-    # behavior.
+    # Number of commits requested. Set 0 to clone full history over SSH with
+    # `git-dedup clone`, using the runner's own SSH key and shared object store.
+    # Shallow requests preserve upstream Git behavior.
     # Default: 1
     fetch-depth: ''
 

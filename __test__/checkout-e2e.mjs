@@ -12,7 +12,7 @@ const home = join(root, 'home')
 const runnerTemp = join(root, 'runner-temp')
 const remotes = join(root, 'remotes')
 const source = join(root, 'source')
-const remote = join(remotes, 'team', 'project')
+const remote = join(remotes, 'team', 'project.git')
 const env = {...process.env, HOME: home, USERPROFILE: home, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: join(home, '.gitconfig')}
 delete env.GIT_DEDUP_STORE
 delete env.GITX_STORE
@@ -45,7 +45,7 @@ try {
   server = createServer((request, response) => {
     const url = new URL(request.url, 'http://localhost')
     const authorizations = request.rawHeaders.filter((value, index) => index % 2 === 0 && value.toLowerCase() === 'authorization')
-    if (authorizations.length !== 1) { response.statusCode = 400; response.end('Expected exactly one Authorization header'); return }
+    if (authorizations.length > 1) { response.statusCode = 400; response.end('Expected at most one Authorization header'); return }
     if (url.pathname.endsWith('/hash-algorithm')) {
       response.setHeader('Content-Type', 'application/json')
       response.end(JSON.stringify({hash_algorithm: 'sha1'}))
@@ -71,6 +71,10 @@ try {
     })
   })
   await new Promise(done => server.listen(0, '127.0.0.1', done))
+  // Full-history checkouts clone the SSH URL; route it to the local smart HTTP server.
+  await writeFile(join(home, 'runner-settings.gitconfig'), `[url "http://127.0.0.1:${server.address().port}/"]
+ insteadOf = git@127.0.0.1:
+`, {flag: 'a'})
   Object.assign(process.env, env, {RUNNER_TEMP: runnerTemp, GITHUB_WORKSPACE: root})
   delete process.env.GIT_DEDUP_STORE
   delete process.env.GITX_STORE

@@ -12,12 +12,17 @@ export function getFetchUrl(settings: IGitSourceSettings): string {
   const encodedOwner = encodeURIComponent(settings.repositoryOwner)
   const encodedName = encodeURIComponent(settings.repositoryName)
   if (settings.sshKey) {
-    const user = settings.sshUser.length > 0 ? settings.sshUser : 'git'
-    return `${user}@${serviceUrl.hostname}:${encodedOwner}/${encodedName}.git`
+    return getSshUrl(settings)
   }
 
   // "origin" is SCHEME://HOSTNAME[:PORT]
   return `${serviceUrl.origin}/${encodedOwner}/${encodedName}`
+}
+
+export function getSshUrl(settings: IGitSourceSettings): string {
+  const serviceUrl = getServerUrl(settings.githubServerUrl)
+  const user = settings.sshUser?.length > 0 ? settings.sshUser : 'git'
+  return `${user}@${serviceUrl.hostname}:${encodeURIComponent(settings.repositoryOwner)}/${encodeURIComponent(settings.repositoryName)}.git`
 }
 
 export function getServerUrl(url?: string): URL {

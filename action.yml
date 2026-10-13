@@ -72,7 +72,7 @@ inputs:
       Specifies whether to use cone-mode when doing a sparse checkout.
     default: true
   fetch-depth:
-    description: 'Number of commits requested. Set 0 for full history backed by the shared git-dedup object store. Explicit shallow requests preserve upstream Git behavior.'
+    description: 'Number of commits requested. Set 0 to clone full history over SSH with `git-dedup clone`, using the runner''s own SSH key and shared object store. Shallow requests preserve upstream Git behavior.'
     default: 1
   fetch-tags:
     description: 'Whether to fetch tags, even if fetch-depth > 0.'
